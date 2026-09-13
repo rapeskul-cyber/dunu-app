@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Dunu — Doa & Zikir",
-    "slug": "dunu-app",
+    "name": "DoZiR — Doa & Zikir",
+    "slug": "dozir-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -31,11 +31,15 @@
       "output": "single"
     },
     "plugins": [
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-font",
+      "expo-web-browser"
     ],
     "extra": {
       "offlineFirst": true,
-      "seedCount": 20
-    }
+      "seedCount": 20,
+      "googleClientId": ""
+    },
+    "scheme": "dozir"
   }
 }

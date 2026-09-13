@@ -1,41 +1,43 @@
 // =============================================================================
-// PHASE 2/3 - Zustand stores: data, tasbih engine, theme, reading, audio
+// Zustand stores — data, tasbih engine, reading prefs, audio.
+// Screen-facing API only; all persistence goes through the repositories.
 // =============================================================================
 
 import { create } from 'zustand';
 import { getDriver } from '../../core/db/client';
-import { DuaRepository, type DuaWithState, type FuzzyHit } from '../../data/repositories/DuaRepository';
-import type { CategoryRow } from '../../core/db/schema';
+import { DuaRepository, type DuaWithState } from '../../data/repositories/DuaRepository';
+import type { CategoryRow, DuaRow } from '../../core/db/schema';
 import {
   createTasbih,
   increment,
   decrement,
-  reset,
-  resetAll,
+  reset as resetPure,
+  resetAll as resetAllPure,
   setTarget as setTargetPure,
+  progress as progressOf,
   type TasbihState,
 } from '../../domain/tasbih';
 import { fireHaptic } from '../../core/utils/haptics';
 import { getAudioEngine } from '../../core/utils/audioEngine';
+import { ARABIC_STEPS, LATIN_STEPS } from '../../core/theme/tokens';
 
 export const todayKey = (): string => new Date().toISOString().slice(0, 10);
 
-// ---------------------------------------------------------------- data store
+// ------------------------------------------------------------------ data store
 interface DataState {
   ready: boolean;
+  repo: DuaRepository | null;
   categories: CategoryRow[];
-  counts: Record<string, number>;
+  duas: DuaWithState[];
   bookmarks: DuaWithState[];
-  catDuas: DuaWithState[];
-  catDuasSlug: string | null;
   current: DuaWithState | null;
-  searchHits: FuzzyHit[];
+  searchResults: DuaRow[];
+  searching: boolean;
   streak: number;
   checkinsToday: Record<number, number>;
-  repo: DuaRepository | null;
 
-  init(): Promise<void>;
-  openCategory(slug: string): Promise<void>;
+  refresh(): Promise<void>;
+  getDuasByCategory(slug: string): Promise<DuaWithState[]>;
   openDua(id: number): Promise<void>;
   refreshDua(id: number): Promise<void>;
   toggleBookmark(id: number): Promise<void>;
@@ -46,33 +48,33 @@ interface DataState {
 
 export const useData = create<DataState>((set, get) => ({
   ready: false,
+  repo: null,
   categories: [],
-  counts: {},
+  duas: [],
   bookmarks: [],
-  catDuas: [],
-  catDuasSlug: null,
   current: null,
-  searchHits: [],
+  searchResults: [],
+  searching: false,
   streak: 0,
   checkinsToday: {},
-  repo: null,
 
-  async init() {
-    const repo = get().repo ?? new DuaRepository(await getDriver());
-    if (!get().repo) set({ repo });
-    const [categories, counts, bookmarks] = await Promise.all([
-      repo.getCategories(),
-      repo.countByCategory(),
-      repo.getBookmarks(),
-    ]);
-    set({ categories, counts, bookmarks, ready: true });
+  async refresh() {
+    let r = get().repo;
+    if (!r) {
+      r = new DuaRepository(await getDriver());
+      set({ repo: r });
+    }
+    const categories = await r.getCategories();
+    const lists = await Promise.all(categories.map((c) => r!.getDuasByCategory(c.slug)));
+    const duas = lists.flat();
+    const bookmarks = await r.getBookmarks();
+    set({ categories, duas, bookmarks, ready: true });
     await get().refreshHabit();
   },
 
-  async openCategory(slug) {
+  async getDuasByCategory(slug) {
     const r = get().repo;
-    if (!r) return;
-    set({ catDuas: await r.getDuasByCategory(slug), catDuasSlug: slug });
+    return r ? r.getDuasByCategory(slug) : [];
   },
 
   async openDua(id) {
@@ -80,30 +82,43 @@ export const useData = create<DataState>((set, get) => ({
     if (!r) return;
     const dua = await r.getDua(id);
     set({ current: dua });
-    useTasbih.getState().load(id);
-    if (dua) useAudio.getState().setUrl(dua.audio_url || null, dua.title);
   },
 
   async refreshDua(id) {
     const r = get().repo;
     if (!r) return;
-    set({ current: await r.getDua(id) });
+    const dua = await r.getDua(id);
+    set({ current: dua });
+    if (get().bookmarks.length !== (await r.getBookmarks()).length) {
+      set({ bookmarks: await r.getBookmarks() });
+    }
   },
 
   async toggleBookmark(id) {
     const r = get().repo;
     if (!r) return;
     await r.toggleBookmark(id);
-    if (get().current?.id === id) await get().refreshDua(id);
     set({ bookmarks: await r.getBookmarks() });
-    const slug = get().catDuasSlug;
-    if (slug) await get().openCategory(slug);
+    if (get().current?.id === id) {
+      set({ current: await r.getDua(id) });
+    }
   },
 
   async search(q) {
     const r = get().repo;
     if (!r) return;
-    set({ searchHits: await r.search(q) });
+    const query = q.trim();
+    if (!query) {
+      set({ searchResults: [], searching: false });
+      return;
+    }
+    set({ searching: true });
+    try {
+      const hits = await r.search(query);
+      set({ searchResults: hits.map((h) => h.dua), searching: false });
+    } catch {
+      set({ searchResults: [], searching: false });
+    }
   },
 
   async refreshHabit() {
@@ -126,159 +141,181 @@ export const useData = create<DataState>((set, get) => ({
 // ---------------------------------------------------------------- tasbih store
 interface TasbihStore {
   state: TasbihState;
-  load(duaId: number): Promise<void>;
-  persist(): Promise<void>;
-  tapUp(): Promise<void>;
-  tapDown(): Promise<void>;
-  doReset(full?: boolean): Promise<void>;
-  changeTarget(t: number): Promise<void>;
+  load(duaId?: number): Promise<void>;
+  tap(): void;
+  undo(): void;
+  reset(): Promise<void>;
+  resetAll(): Promise<void>;
+  setTarget(t: number): Promise<void>;
+  progress(): number;
 }
 
-const EMPTY: TasbihState = { duaId: 0, current: 0, target: 33, cycles: 0 };
+const FREE_DUA_ID = 0; // standalone tasbih persists under dua_id 0
+const EMPTY: TasbihState = { duaId: FREE_DUA_ID, current: 0, target: 33, cycles: 0 };
+
+async function persistState(s: TasbihState) {
+  const r = useData.getState().repo;
+  if (!r || !s.duaId && s.duaId !== 0) return;
+  await r.saveCounter(s.duaId, s.current, s.target, s.cycles);
+}
 
 export const useTasbih = create<TasbihStore>((set, get) => ({
   state: EMPTY,
 
-  async load(duaId) {
+  async load(duaId = FREE_DUA_ID) {
     const r = useData.getState().repo;
     if (!r) return;
     const c = await r.getCounter(duaId);
     set({ state: createTasbih(duaId, c.target, c.current, c.cycles) });
   },
 
-  async persist() {
-    const { state } = get();
-    const r = useData.getState().repo;
-    if (!r || !state.duaId) return;
-    await r.saveCounter(state.duaId, state.current, state.target, state.cycles);
-  },
-
-  async tapUp() {
+  tap() {
     const ev = increment(get().state);
     set({ state: ev.state });
-    if (ev.haptic) await fireHaptic(ev.haptic);
-    await get().persist();
+    if (ev.haptic) void fireHaptic(ev.haptic);
+    void persistState(ev.state);
     if (ev.autoAdvance) {
-      // Auto-advance event: completion banks a habit check-in and refreshes lists.
-      await useData.getState().checkIn(ev.state.duaId);
-      await useData.getState().refreshDua(ev.state.duaId);
+      // completion banks a habit check-in for the attached dua (if any)
+      const id = ev.state.duaId;
+      if (id) {
+        void useData.getState().checkIn(id);
+        void useData.getState().refreshDua(id);
+      }
     }
   },
 
-  async tapDown() {
+  undo() {
     const ev = decrement(get().state);
     set({ state: ev.state });
-    if (ev.haptic) await fireHaptic(ev.haptic);
-    await get().persist();
+    if (ev.haptic) void fireHaptic(ev.haptic);
+    void persistState(ev.state);
   },
 
-  async doReset(full = false) {
-    const ev = full ? resetAll(get().state) : reset(get().state);
+  async reset() {
+    const ev = resetPure(get().state);
     set({ state: ev.state });
-    if (ev.haptic) await fireHaptic(ev.haptic);
-    await get().persist();
+    await fireHaptic('undo');
+    await persistState(ev.state);
   },
 
-  async changeTarget(t) {
+  async resetAll() {
+    const ev = resetAllPure(get().state);
+    set({ state: ev.state });
+    await fireHaptic('undo');
+    await persistState(ev.state);
+  },
+
+  async setTarget(t) {
     const ev = setTargetPure(get().state, t);
     set({ state: ev.state });
     await fireHaptic('undo');
     const r = useData.getState().repo;
-    if (r && ev.state.duaId) await r.setCounterTarget(ev.state.duaId, ev.state.target);
+    if (r) await r.setCounterTarget(ev.state.duaId, ev.state.target);
   },
+
+  progress: () => progressOf(get().state),
 }));
 
-// ------------------------------------------------------------------- theme
-interface ThemeStore {
-  mode: 'system' | 'light' | 'dark';
-  setMode(m: ThemeStore['mode']): void;
-}
-export const useTheme = create<ThemeStore>((set) => ({
-  mode: 'system',
-  setMode: (mode) => set({ mode }),
-}));
-
-// ---------------------------------------------------------------- reading prefs
-export const ARABIC_SIZES = [22, 26, 30, 36, 44];
-export const LATIN_SIZES = [14, 16, 18, 20, 24];
-
+// ------------------------------------------------------------ reading prefs
 interface ReadStore {
-  arabicIdx: number;
-  latinIdx: number;
-  bumpArabic(dir: 1 | -1): void;
-  bumpLatin(dir: 1 | -1): void;
+  arabicStep: number;
+  latinStep: number;
+  cycleArabic(dir: 1 | -1): void;
+  cycleLatin(dir: 1 | -1): void;
 }
+
 export const useReading = create<ReadStore>((set) => ({
-  arabicIdx: 2,
-  latinIdx: 1,
-  bumpArabic: (dir) => set((s) => ({ arabicIdx: Math.max(0, Math.min(ARABIC_SIZES.length - 1, s.arabicIdx + dir)) })),
-  bumpLatin: (dir) => set((s) => ({ latinIdx: Math.max(0, Math.min(LATIN_SIZES.length - 1, s.latinIdx + dir)) })),
+  arabicStep: 3,
+  latinStep: 2,
+  cycleArabic: (dir) =>
+    set((s) => ({ arabicStep: Math.max(0, Math.min(ARABIC_STEPS.length - 1, s.arabicStep + dir)) })),
+  cycleLatin: (dir) =>
+    set((s) => ({ latinStep: Math.max(0, Math.min(LATIN_STEPS.length - 1, s.latinStep + dir)) })),
 }));
 
-// ------------------------------------------------------------------- audio store
+// ------------------------------------------------------------------ audio store
 interface AudioStore {
+  track: string | null;
   title: string;
   url: string | null;
+  ready: boolean;
   playing: boolean;
-  speed: number;
+  rate: Speed;
   loop: boolean;
   positionMs: number;
   durationMs: number;
   error: string | null;
-  setUrl(url: string | null, title: string): void;
+  load(key: string, url: string, title: string): Promise<void>;
   toggle(): Promise<void>;
-  cycleSpeed(): Promise<void>;
+  setRate(r: Speed): Promise<void>;
   toggleLoop(): Promise<void>;
-  seekRatio(r: number): Promise<void>;
   stop(): Promise<void>;
-  onStatus(s: { playing: boolean; positionMs: number; durationMs: number }): void;
 }
 
-export const SPEEDS = [0.75, 1, 1.25];
+export type Speed = 0.75 | 1 | 1.25;
+export const SPEEDS: Speed[] = [0.75, 1, 1.25];
+/** Next speed in the cycle (wraps) — keeps call sites typed as Speed. */
+export const nextSpeed = (cur: Speed): Speed => SPEEDS[(SPEEDS.indexOf(cur) + 1) % SPEEDS.length]!;
 
 export const useAudio = create<AudioStore>((set, get) => ({
+  track: null,
   title: '',
   url: null,
+  ready: false,
   playing: false,
-  speed: 1,
+  rate: 1,
   loop: false,
   positionMs: 0,
   durationMs: 0,
   error: null,
 
-  setUrl(url, title) {
+  async load(key, url, title) {
     const eng = getAudioEngine();
-    eng.setListener(null);
-    void eng.unload();
-    if (url) {
-      void eng.load(url).then(() => {
-        eng.setListener((s) => get().onStatus(s));
-      });
-    }
-    set({ url, title, playing: false, positionMs: 0, durationMs: 0, error: url ? null : 'Audio tidak tersedia' });
-  },
-
-  async toggle() {
-    const { url, playing, speed, loop } = get();
-    if (!url) {
-      set({ error: 'Audio tidak tersedia untuk zikir ini' });
+    try {
+      if (get().track !== key) {
+        await eng.load(url);
+        eng.setListener((s) =>
+          set({ playing: s.playing, positionMs: s.positionMs, durationMs: s.durationMs }),
+        );
+        set({ track: key, url, title, ready: true, error: null, positionMs: 0, durationMs: 0 });
+      }
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : 'Gagal memuat audio' });
       return;
     }
-    const eng = getAudioEngine();
-    if (playing) {
+    if (get().playing) {
       await eng.pause();
       set({ playing: false });
     } else {
-      await eng.play(speed, loop);
-      set({ playing: true, error: null });
+      await eng.play(get().rate, get().loop);
+      set({ playing: true });
     }
   },
 
-  async cycleSpeed() {
-    const i = SPEEDS.indexOf(get().speed);
-    const s = SPEEDS[(i + 1) % SPEEDS.length];
-    set({ speed: s });
-    await getAudioEngine().setRate(s);
+  async toggle() {
+    const { url, playing, rate, loop, ready } = get();
+    if (!url) {
+      set({ error: 'Audio tidak tersedia' });
+      return;
+    }
+    const eng = getAudioEngine();
+    try {
+      if (playing) {
+        await eng.pause();
+        set({ playing: false });
+      } else {
+        if (!ready) await eng.load(url);
+        await eng.play(rate, loop);
+        set({ playing: true, ready: true, error: null });
+      }
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : 'Audio gagal diputar' });
+    }
+  },
+
+  async setRate(r) {
+    set({ rate: r });
+    if (get().playing) await getAudioEngine().setRate(r);
   },
 
   async toggleLoop() {
@@ -287,17 +324,8 @@ export const useAudio = create<AudioStore>((set, get) => ({
     await getAudioEngine().setLoop(loop);
   },
 
-  async seekRatio(r) {
-    await getAudioEngine().seekTo(r);
-  },
-
   async stop() {
-    const eng = getAudioEngine();
-    await eng.stop();
+    await getAudioEngine().stop();
     set({ playing: false, positionMs: 0 });
-  },
-
-  onStatus(s) {
-    set({ playing: s.playing, positionMs: s.positionMs, durationMs: s.durationMs });
   },
 }));

@@ -1,4 +1,6 @@
-// Shared presentational primitives.
+// Shared primitives v2 — restrained "manuscript" styling:
+// surface fills instead of 1px-border boxes, 8pt rhythm, real press feedback
+// (scale + opacity, 140ms out / 220ms back), no emoji anywhere.
 
 import React from 'react';
 import {
@@ -6,138 +8,152 @@ import {
   Text,
   Pressable,
   StyleSheet,
-  useColorScheme,
   type ViewStyle,
   type StyleProp,
+  type TextStyle,
 } from 'react-native';
-import { useTheme } from '../store/stores';
-import { darkTheme, lightTheme, SP, type Theme } from '../../core/theme/theme';
+import { SP, TYPE } from '../../core/theme/tokens';
+import { useT } from '../theme/ThemeProvider';
 
-export function useT(): Theme {
-  const sys = useColorScheme();
-  const { mode } = useTheme();
-  const dark = mode === 'dark' || (mode === 'system' && sys === 'dark');
-  return dark ? darkTheme : lightTheme;
-}
+/** Face helpers: each registered family name already carries its weight, so we
+ *  select the family directly instead of relying on (fallback-prone) weights. */
+const SERIF_FAM = { '300': 'Cormorant Garamond', '400': 'Cormorant Garamond', '500': 'Cormorant Garamond', '600': 'Cormorant Garamond Semi' } as const;
+const SANS_FAM = { '400': 'Public Sans', '500': 'Public Sans Medium', '600': 'Public Sans Semi', '700': 'Public Sans Semi' } as const;
+const NASKH_FAM = { '400': 'Noto Naskh Arabic', '500': 'Noto Naskh Arabic Semi', '600': 'Noto Naskh Arabic Semi', '700': 'Noto Naskh Arabic Semi' } as const;
 
-export function Screen({
-  children,
-  style,
-}: {
-  children: React.ReactNode;
-  style?: StyleProp<ViewStyle>;
-}) {
+export const SERIF = (w: '300' | '400' | '500' | '600' = '500') => ({
+  fontFamily: SERIF_FAM[w],
+});
+export const SANS = (w: '400' | '500' | '600' | '700' = '400') => ({
+  fontFamily: SANS_FAM[w],
+});
+export const NASKH = (w: '400' | '500' | '600' | '700' = '400') => ({
+  fontFamily: NASKH_FAM[w],
+});
+
+export function Screen({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
   const t = useT();
   return <View style={[{ flex: 1, backgroundColor: t.bg }, style]}>{children}</View>;
 }
 
-export function Chip({
-  label,
-  active,
-  color,
-  onPress,
-}: {
-  label: string;
-  active?: boolean;
-  color?: string;
-  onPress?: () => void;
-}) {
+/** Small tracked label used above sections; gold, quiet, never a shouty CAPS box. */
+export function Meta({ children, style }: { children: React.ReactNode; style?: StyleProp<TextStyle> }) {
+  const t = useT();
+  return <Text style={[SANS('400'), { fontSize: TYPE.caption, color: t.textFaint }, style]}>{children}</Text>;
+}
+
+export function Eyebrow({ children, style }: { children: React.ReactNode; style?: StyleProp<TextStyle> }) {
   const t = useT();
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => ({
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        borderRadius: SP.radius.pill,
-        borderWidth: 1,
-        borderColor: active ? (color ?? t.primary) : t.cardBorder,
-        backgroundColor: active ? (color ?? t.primary) : 'transparent',
-        opacity: pressed ? 0.75 : 1,
-        marginRight: 8,
-        marginBottom: 8,
-      })}
+    <Text
+      style={[
+        SANS('600'),
+        { color: t.accent, fontSize: TYPE.micro, letterSpacing: 1.1, textTransform: 'uppercase', marginBottom: SP.sm },
+        style,
+      ]}
+      accessibilityRole="text"
     >
-      <Text style={{ fontSize: 13, fontWeight: '600', color: active ? t.onPrimary : t.textMuted }}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-/** Progress ring drawn with stacked Views (no SVG dependency, RN + web safe). */
-export function ProgressRing({
-  ratio,
-  size,
-  stroke,
-  color,
-  track,
-  children,
-}: {
-  ratio: number;
-  size: number;
-  stroke: number;
-  color: string;
-  track: string;
-  children?: React.ReactNode;
-}) {
-  const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const clamped = Math.max(0, Math.min(1, ratio));
-  // Segment arc with small dashes so it reads as a ring even without SVG.
-  const segments = 60;
-  const filled = Math.round(clamped * segments);
-  return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: track, padding: stroke }}>
-      <View style={StyleSheet.absoluteFill}>
-        {Array.from({ length: segments }).map((_, i) => {
-          const angle = (i / segments) * 360;
-          const on = i < filled;
-          return (
-            <View
-              key={i}
-              style={{
-                position: 'absolute',
-                left: size / 2 - 1.5,
-                top: size / 2 - r - 6,
-                width: 3,
-                height: 12,
-                borderRadius: 2,
-                backgroundColor: on ? color : 'transparent',
-                transform: [{ rotate: `${angle}deg` }, { translateY: 0 }],
-                opacity: on ? 1 : 0,
-              }}
-            />
-          );
-        })}
-      </View>
-      <View
-        style={{
-          width: size - stroke * 2,
-          height: size - stroke * 2,
-          borderRadius: (size - stroke * 2) / 2,
-          backgroundColor: 'transparent',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {children}
-      </View>
-      <Text style={{ display: 'none' }}>{circ}</Text>
-    </View>
-  );
-}
-
-export function SectionTitle({ children }: { children: React.ReactNode }) {
-  const t = useT();
-  return (
-    <Text style={{ color: t.textMuted, fontSize: 11, letterSpacing: 2.2, fontWeight: '700', marginBottom: 8, textTransform: 'uppercase' }}>
       {children}
     </Text>
   );
 }
 
-export const fmtTime = (ms: number): string => {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-};
+export function SectionHead({
+  eyebrow,
+  title,
+  trailing,
+}: {
+  eyebrow?: string;
+  title: string;
+  trailing?: React.ReactNode;
+}) {
+  const t = useT();
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: SP.xl, marginBottom: SP.md }}>
+      <View style={{ flex: 1 }}>
+        {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
+        <Text style={[SERIF('600'), { color: t.text, fontSize: TYPE.headline, letterSpacing: -0.2 }]}>{title}</Text>
+      </View>
+      {trailing}
+    </View>
+  );
+}
+
+/** Tappable card with proper press physics. */
+export function TapCard({
+  onPress,
+  children,
+  style,
+  ariaLabel,
+}: {
+  onPress: () => void;
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  ariaLabel?: string;
+}) {
+  const t = useT();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={ariaLabel}
+      style={({ pressed }) => [
+        {
+          backgroundColor: t.surface,
+          borderRadius: SP.r.lg,
+          transform: [{ scale: pressed ? 0.985 : 1 }],
+          opacity: pressed ? 0.85 : 1,
+          transitionProperty: 'transform, opacity',
+          transitionDuration: pressed ? 140 : 220,
+        },
+        style as ViewStyle,
+      ]}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
+export function Chip({
+  label,
+  active,
+  onPress,
+  compact,
+}: {
+  label: string;
+  active?: boolean;
+  onPress?: () => void;
+  compact?: boolean;
+}) {
+  const t = useT();
+  const body = (
+    <Text style={[SANS(active ? '600' : '500'), { fontSize: TYPE.caption, color: active ? t.onPrimary : t.textMuted }]}>
+      {label}
+    </Text>
+  );
+  const base: ViewStyle = {
+    paddingHorizontal: compact ? SP.md : SP.lg,
+    paddingVertical: compact ? SP.xs + 1 : SP.sm,
+    borderRadius: SP.r.chip,
+    backgroundColor: active ? t.primary : 'transparent',
+    borderWidth: active ? 0 : 1,
+    borderColor: t.border,
+  };
+  if (!onPress) return <View style={[base, { alignSelf: 'flex-start' }]}>{body}</View>;
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [base, pressed && { opacity: 0.7 }]}>
+      {body}
+    </Pressable>
+  );
+}
+
+/** Thin gold rule that opens a citation line — signature detail of the system. */
+export function GoldRule({ height = 22 }: { height?: number }) {
+  const t = useT();
+  return <View style={{ width: 2, borderRadius: 1, backgroundColor: t.accentSoft, minHeight: height, marginRight: SP.md }} />;
+}
+
+export function Divider({ mt = 0, mb = 0 }: { mt?: number; mb?: number }) {
+  const t = useT();
+  return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.hairline, marginTop: mt, marginBottom: mb }} />;
+}

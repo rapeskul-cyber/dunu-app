@@ -1,194 +1,203 @@
-// PHASE 3 — Home: category grid + bookmarks row + habit streak.
+// Home — editorial stack, not a card grid of emoji tiles:
+// context-aware greeting -> practice of the moment -> dhikr categories as a
+// typographic list -> bookmarks -> Qur'an entry. Zero emoji, zero icon soup.
 
-import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, RefreshControl } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, ScrollView, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Screen, SERIF, SANS, NASKH, Eyebrow, Divider, Meta, TapCard } from '../components/ui';
+import {
+  IconSunrise, IconSunset, IconMosque, IconMoon, IconShield, IconSeed, IconBook, IconFlame,
+} from '../components/Icons';
+import { useT } from '../theme/ThemeProvider';
+import { SP, TYPE } from '../../core/theme/tokens';
 import { useData } from '../store/stores';
-import { Screen, useT, SectionTitle } from '../components/ui';
-import { SP } from '../../core/theme/theme';
+
+const ICONS: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
+  sunrise: IconSunrise,
+  sunset: IconSunset,
+  mosque: IconMosque,
+  moon: IconMoon,
+  shield: IconShield,
+  seed: IconSeed,
+};
+
+/** Maps the current time to a greeting and the practice that fits it. */
+function momentOfDay(h: number): { greet: string; slug: string; note: string } {
+  if (h >= 4 && h < 11) return { greet: 'Selamat pagi', slug: 'dzikir-pagi', note: 'Waktu zikir pagi' };
+  if (h >= 11 && h < 15) return { greet: 'Selamat siang', slug: 'setelah-sholat', note: 'Baiknya setelah sholat' };
+  if (h >= 15 && h < 18) return { greet: 'Selamat sore', slug: 'dzikir-petang', note: 'Waktu zikir petang' };
+  return { greet: 'Selamat malam', slug: 'sebelum-tidur', note: 'Sebelum tidur' };
+}
 
 export function HomeScreen({
   onOpenCategory,
-  onOpenDua,
-  onGoSearch,
-  onGoTasbih,
+  onOpenQuran,
+  onOpenHabit,
+  onOpenSearch,
 }: {
   onOpenCategory: (slug: string) => void;
-  onOpenDua: (id: number) => void;
-  onGoSearch: () => void;
-  onGoTasbih: () => void;
+  onOpenQuran: () => void;
+  onOpenHabit: () => void;
+  onOpenSearch: () => void;
 }) {
   const t = useT();
   const insets = useSafeAreaInsets();
-  const { categories, counts, bookmarks, streak, ready, init } = useData();
-  const [refreshing, setRefreshing] = useState(false);
+  const { categories, duas, bookmarks, streak, refresh, ready } = useData();
+  const [refreshing, setRefreshing] = React.useState(false);
+  const moment = momentOfDay(new Date().getHours());
 
   useEffect(() => {
-    void init();
-  }, [init]);
+    void refresh();
+  }, [refresh]);
 
-  const hour = new Date().getHours();
-  const greeting = hour < 11 ? 'Selamat pagi' : hour < 16 ? 'Selamat siang' : hour < 19 ? 'Selamat petang' : 'Selamat malam';
-  const suggested = hour < 11 ? 'dzikir-pagi' : hour >= 16 && hour < 19 ? 'dzikir-petang' : hour >= 19 ? 'sebelum-tidur' : 'setelah-sholat';
+  const countFor = (slug: string) => duas.filter((d) => d.category_slug === slug).length;
+  const featured = duas.find((d) => d.category_slug === moment.slug);
 
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={{ paddingTop: insets.top + 18, paddingBottom: 120, paddingHorizontal: SP.md }}
+        contentContainerStyle={{ paddingBottom: 130 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={async () => {
               setRefreshing(true);
-              await useData.getState().init();
+              await refresh();
               setRefreshing(false);
             }}
             tintColor={t.primary}
           />
         }
-        showsVerticalScrollIndicator={false}
       >
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: t.textMuted, fontSize: 13 }}>{greeting},</Text>
-            <Text style={{ color: t.text, fontSize: 28, fontWeight: '700', fontFamily: 'SpaceGrotesk_700Bold' }}>
-              Mari berzikir 🕌
-            </Text>
-          </View>
-          <View
-            style={{
-              alignItems: 'center',
-              backgroundColor: t.card,
-              borderWidth: 1,
-              borderColor: t.cardBorder,
-              borderRadius: SP.radius.md,
-              paddingHorizontal: 14,
-              paddingVertical: 10,
-            }}
-          >
-            <Text style={{ fontSize: 18 }}>🔥</Text>
-            <Text style={{ color: t.text, fontWeight: '700', fontSize: 15 }}>{streak}</Text>
-            <Text style={{ color: t.textMuted, fontSize: 10 }}>hari</Text>
-          </View>
+        {/* ---------- masthead ---------- */}
+        <View style={{ paddingTop: insets.top + SP.lg, paddingHorizontal: SP.lg }}>
+          <Eyebrow>{moment.note}</Eyebrow>
+          <Text style={[SERIF('600'), { color: t.text, fontSize: TYPE.display, letterSpacing: -0.6, lineHeight: TYPE.display * 1.1 }]}>
+            {moment.greet}
+          </Text>
+          <Text style={[SANS('400'), { color: t.textMuted, fontSize: TYPE.body, marginTop: SP.sm, lineHeight: TYPE.body * 1.5 }]}>
+            Mulai dengan niat yang tenang — pilih zikir atau buka mushaf.
+          </Text>
         </View>
 
-        <Pressable
-          onPress={onGoSearch}
-          style={({ pressed }) => ({
-            marginTop: SP.lg,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 10,
-            backgroundColor: t.card,
-            borderWidth: 1,
-            borderColor: t.cardBorder,
-            borderRadius: SP.radius.md,
-            paddingHorizontal: SP.md,
-            paddingVertical: 14,
-            opacity: pressed ? 0.8 : 1,
-          })}
-        >
-          <Text style={{ fontSize: 16 }}>🔍</Text>
-          <Text style={{ color: t.textMuted, fontSize: 15 }}>Cari doa, zikir, atau arti…</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={onGoTasbih}
-          style={({ pressed }) => ({
-            marginTop: SP.sm,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 10,
-            backgroundColor: t.primary,
-            borderRadius: SP.radius.md,
-            paddingVertical: 14,
-            opacity: pressed ? 0.85 : 1,
-          })}
-        >
-          <Text style={{ fontSize: 17 }}>📿</Text>
-          <Text style={{ color: t.onPrimary, fontWeight: '700', fontSize: 16 }}>Buka Tasbih Digital</Text>
-        </Pressable>
-
-        <View style={{ marginTop: SP.xl }}>
-          <SectionTitle>Kategori</SectionTitle>
-          <View style={styles.grid}>
-            {!ready && categories.length === 0 ? (
-              <Text style={{ color: t.textMuted }}>Memuat data…</Text>
-            ) : (
-              categories.map((c) => {
-                const isSuggested = c.slug === suggested;
-                return (
-                  <Pressable
-                    key={c.slug}
-                    onPress={() => onOpenCategory(c.slug)}
-                    style={({ pressed }) => ({
-                      backgroundColor: t.card,
-                      borderColor: isSuggested ? c.color : t.cardBorder,
-                      borderWidth: isSuggested ? 1.5 : 1,
-                      borderRadius: SP.radius.lg,
-                      padding: SP.md,
-                      minHeight: 108,
-                      justifyContent: 'space-between',
-                      transform: [{ scale: pressed ? 0.97 : 1 }],
-                    })}
-                  >
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                      <Text style={{ fontSize: 26 }}>{c.icon}</Text>
-                      {isSuggested && (
-                        <Text style={{ fontSize: 9, color: c.color, fontWeight: '700', letterSpacing: 0.5 }}>
-                          WAKTUNYA
-                        </Text>
-                      )}
-                    </View>
-                    <View>
-                      <Text style={{ color: t.text, fontWeight: '700', fontSize: 15 }}>{c.name}</Text>
-                      <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
-                        {counts[c.slug] ?? 0} zikir
-                      </Text>
-                    </View>
-                  </Pressable>
-                );
-              })
-            )}
-          </View>
-        </View>
-
-        {bookmarks.length > 0 && (
-          <View style={{ marginTop: SP.xl }}>
-            <SectionTitle>Disimpan</SectionTitle>
-            {bookmarks.slice(0, 6).map((b) => (
-              <Pressable
-                key={b.id}
-                onPress={() => onOpenDua(b.id)}
-                style={({ pressed }) => ({
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  paddingVertical: 12,
-                  paddingHorizontal: SP.sm,
-                  borderBottomWidth: 1,
-                  borderBottomColor: t.cardBorder,
-                  opacity: pressed ? 0.7 : 1,
-                })}
-              >
-                <Text style={{ fontSize: 16 }}>⭐</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: t.text, fontWeight: '600' }}>{b.title}</Text>
-                  <Text style={{ color: t.textMuted, fontSize: 12 }} numberOfLines={1}>
-                    {b.source}
-                  </Text>
+        {/* ---------- practice of the moment ---------- */}
+        {featured && (
+          <View style={{ paddingHorizontal: SP.lg, marginTop: SP.xl }}>
+            <TapCard onPress={() => onOpenCategory(featured.category_slug)} ariaLabel={`Buka ${featured.title}`} style={{ padding: SP.lg }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Eyebrow style={{ marginBottom: 0 }}>Amalan saat ini</Eyebrow>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                  <IconFlame size={13} color={t.accent} />
+                  <Text style={[SANS('600'), { color: t.accent, fontSize: TYPE.micro }]}>{streak} hari</Text>
                 </View>
-                <Text style={{ color: t.textMuted }}>›</Text>
-              </Pressable>
+              </View>
+
+              <Text style={[SERIF('600'), { color: t.text, fontSize: TYPE.title, marginTop: SP.sm }]}>
+                {featured.title}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={[NASKH('400'), { color: t.textMuted, fontSize: 19, marginTop: SP.sm, textAlign: 'right', writingDirection: 'rtl' }]}
+              >
+                {featured.arabic}
+              </Text>
+            </TapCard>
+          </View>
+        )}
+
+        {/* ---------- Qur'an entry ---------- */}
+        <View style={{ paddingHorizontal: SP.lg, marginTop: SP.xl }}>
+          <TapCard onPress={onOpenQuran} ariaLabel="Buka Al-Qur'an" style={{ padding: SP.lg }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: t.bgElevated, alignItems: 'center', justifyContent: 'center' }}>
+                <IconBook size={22} color={t.accent} />
+              </View>
+              <View style={{ flex: 1, marginLeft: SP.md }}>
+                <Text style={[SERIF('600'), { color: t.text, fontSize: TYPE.title }]}>Al-Qur’an</Text>
+                <Meta>114 surah · 6.236 ayat · teks Utsmani & terjemahan</Meta>
+              </View>
+              <Text style={[NASKH('600'), { color: t.accent, fontSize: 20 }]}>﷽</Text>
+            </View>
+          </TapCard>
+        </View>
+
+        {/* ---------- categories as a typographic list ---------- */}
+        <View style={{ paddingHorizontal: SP.lg, marginTop: SP.xxl }}>
+          <Eyebrow>Kumpulan zikir & doa</Eyebrow>
+          <Divider mb={SP.xs} />
+          {categories.map((c, i) => {
+            const Icon = ICONS[c.icon] ?? IconSeed;
+            return (
+              <View key={c.slug}>
+                <TapCard
+                  onPress={() => onOpenCategory(c.slug)}
+                  ariaLabel={`${c.name}, ${countFor(c.slug)} doa`}
+                  style={{ paddingVertical: SP.md, paddingHorizontal: SP.sm, backgroundColor: 'transparent', borderRadius: SP.r.md }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Icon size={21} color={t.accent} />
+                    <Text style={[SANS('600'), { color: t.text, fontSize: TYPE.body, flex: 1, marginLeft: SP.md }]}>
+                      {c.name}
+                    </Text>
+                    <Text style={[SANS('400'), { color: t.textFaint, fontSize: TYPE.caption }]}>
+                      {countFor(c.slug)} doa
+                    </Text>
+                  </View>
+                </TapCard>
+                {i < categories.length - 1 && <Divider />}
+              </View>
+            );
+          })}
+        </View>
+
+        {/* ---------- bookmarks ---------- */}
+        {bookmarks.length > 0 && (
+          <View style={{ paddingHorizontal: SP.lg, marginTop: SP.xxl }}>
+            <Eyebrow>Disimpan</Eyebrow>
+            <Divider mb={SP.xs} />
+            {bookmarks.slice(0, 3).map((d, i) => (
+              <View key={d.id}>
+                <TapCard
+                  onPress={() => onOpenCategory(d.category_slug)}
+                  ariaLabel={d.title}
+                  style={{ paddingVertical: SP.md, paddingHorizontal: SP.sm, backgroundColor: 'transparent', borderRadius: SP.r.md }}
+                >
+                  <Text style={[SANS('600'), { color: t.text, fontSize: TYPE.body }]}>{d.title}</Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[NASKH('400'), { color: t.textMuted, fontSize: 17, marginTop: 3, textAlign: 'right', writingDirection: 'rtl' }]}
+                  >
+                    {d.arabic}
+                  </Text>
+                </TapCard>
+                {i < Math.min(bookmarks.length, 3) - 1 && <Divider />}
+              </View>
             ))}
           </View>
+        )}
+
+        {/* ---------- habit strip ---------- */}
+        <View style={{ paddingHorizontal: SP.lg, marginTop: SP.xxl }}>
+          <TapCard onPress={onOpenHabit} ariaLabel="Buka kebiasaan harian" style={{ padding: SP.lg }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <IconFlame size={20} color={t.accent} />
+              <Text style={[SANS('600'), { color: t.text, fontSize: TYPE.body, flex: 1, marginLeft: SP.md }]}>
+                Kebiasaan harian
+              </Text>
+              <Text style={[SANS('600'), { color: t.accent, fontSize: TYPE.caption }]}>
+                {streak} hari beruntun
+              </Text>
+            </View>
+          </TapCard>
+        </View>
+
+        {!ready && (
+          <Text style={[SANS('400'), { color: t.textFaint, fontSize: TYPE.micro, textAlign: 'center', marginTop: SP.xl }]}>
+            memuat data…
+          </Text>
         )}
       </ScrollView>
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: SP.sm },
-});

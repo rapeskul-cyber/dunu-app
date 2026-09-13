@@ -34,6 +34,41 @@ idx_path = os.path.join(DIST, "index.html")
 with open(idx_path, encoding="utf-8") as f:
     html = f.read()
 
+# --- Vercel uploads skip ANY directory named `node_modules`, but Metro exports
+# assets (SQLite WASM + every @expo-google-fonts .ttf) to
+# dist/assets/node_modules/... . Move each one to a flat vendor path and rewrite
+# the plain-string references inside the exported JS bundles.
+import glob
+import shutil
+
+moved_files, rewritten_refs = 0, 0
+vend = os.path.join(DIST, "assets", "vendor")
+js_files = glob.glob(os.path.join(DIST, "_expo", "static", "js", "web", "*.js"))
+codes = {f: open(f, encoding="utf-8", errors="ignore").read() for f in js_files}
+
+for src in glob.glob(os.path.join(DIST, "assets", "node_modules", "**", "*.*"), recursive=True):
+    if not os.path.isfile(src):
+        continue
+    rel = os.path.relpath(src, os.path.join(DIST, "assets", "node_modules")).replace("\\", "/")
+    ext = os.path.splitext(src)[1]
+    # flatten: keep only the hashed filename (already content-hash-unique)
+    flat = f"{os.path.basename(src)}"
+    os.makedirs(vend, exist_ok=True)
+    shutil.copy2(src, os.path.join(vend, flat))
+    old_ref, new_ref = "assets/node_modules/" + rel, "assets/vendor/" + flat
+    n = 0
+    for f, code in codes.items():
+        if old_ref in code:
+            codes[f] = code = code.replace(old_ref, new_ref)
+            n += code.count(new_ref)
+    moved_files += 1
+    rewritten_refs += n
+
+for f, code in codes.items():
+    with open(f, "w", encoding="utf-8", newline="") as fh:
+        fh.write(code)
+print(f"relocated {moved_files} node_modules assets -> assets/vendor ({rewritten_refs} bundle refs rewritten)")
+
 if "manifest.webmanifest" not in html:
     html = html.replace(
         "</head>",
@@ -62,6 +97,12 @@ vercel = {
             "source": "/(.*).wasm",
             "headers": [
                 {"key": "Content-Type", "value": "application/wasm"},
+                {"key": "Cache-Control", "value": "public, max-age=31536000, immutable"},
+            ],
+        },
+        {
+            "source": "/assets/vendor/(.*)",
+            "headers": [
                 {"key": "Cache-Control", "value": "public, max-age=31536000, immutable"},
             ],
         },

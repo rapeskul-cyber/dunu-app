@@ -1,226 +1,129 @@
-// PHASE 3/4 — App root: DB bootstrap, custom navigator, tab bar, habit tracker.
+// App shell — theme provider, DB/font bootstrap, hand-rolled navigator and a
+// four-tab bar drawn with SVG icons (v1 used emoji, which was the single
+// biggest tell of an unpolished build).
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator, useColorScheme } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import React, { useCallback, useState } from 'react';
+import { View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { initDatabase } from './src/core/db/client';
-import { migrateAndSeed } from './src/core/db/schema';
-import { openDatabaseAsync } from 'expo-sqlite';
-import { useData, useTheme } from './src/presentation/store/stores';
-import { Screen, useT, SectionTitle } from './src/presentation/components/ui';
+import { StatusBar } from 'expo-status-bar';
+import { ThemeProvider, useT } from './src/presentation/theme/ThemeProvider';
+import { useBoot } from './src/presentation/hooks/useBoot';
+import { SP, TYPE } from './src/core/theme/tokens';
+import { SANS, SERIF } from './src/presentation/components/ui';
+import { IconBeads, IconFlame, IconSearch, IconSeed, IconUser } from './src/presentation/components/Icons';
 import { HomeScreen } from './src/presentation/screens/HomeScreen';
+import { SearchScreen } from './src/presentation/screens/SearchScreen';
+import { TasbihScreen } from './src/presentation/screens/TasbihScreen';
+import { HabitScreen } from './src/presentation/screens/HabitScreen';
+import { ProfileScreen } from './src/presentation/screens/ProfileScreen';
+import { CategoryScreen } from './src/presentation/screens/CategoryScreen';
 import { DetailScreen } from './src/presentation/screens/DetailScreen';
-import { CategoryScreen, TasbihScreen, SearchScreen } from './src/presentation/screens/Screens';
-import { SP } from './src/core/theme/theme';
+import { QuranScreen } from './src/presentation/screens/QuranScreen';
+import { QuranReaderScreen } from './src/presentation/screens/QuranReaderScreen';
+import { useTasbih } from './src/presentation/store/stores';
 
 type Route =
   | { name: 'home' }
-  | { name: 'category'; slug: string }
-  | { name: 'detail'; id: number }
-  | { name: 'tasbih' }
   | { name: 'search' }
-  | { name: 'habit' };
+  | { name: 'tasbih' }
+  | { name: 'habit' }
+  | { name: 'profile' }
+  | { name: 'quran' }
+  | { name: 'reader'; surah: number }
+  | { name: 'category'; slug: string }
+  | { name: 'detail'; id: number };
 
-function Bootstrap({ children }: { children: React.ReactNode }) {
-  const [ok, setOk] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+const TABS = [
+  { key: 'home', label: 'Beranda', Icon: IconSeed },
+  { key: 'search', label: 'Cari', Icon: IconSearch },
+  { key: 'tasbih', label: 'Tasbih', Icon: IconBeads },
+  { key: 'habit', label: 'Habit', Icon: IconFlame },
+  { key: 'profile', label: 'Profil', Icon: IconUser },
+] as const;
+
+function BootFallback({
+  error,
+  onRetry,
+  progress,
+  label,
+}: {
+  error: string | null;
+  onRetry: () => void;
+  progress: number;
+  label: string;
+}) {
   const t = useT();
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        // Web fallback: expo-sqlite uses WASM; ensure it is installed before use.
-        await initDatabase();
-        if (alive) setOk(true);
-      } catch (e) {
-        // Retry once with a fresh handle; WASM init can race on cold start.
-        try {
-          const db = await openDatabaseAsync('dunu.db');
-          await migrateAndSeed({
-            execAsync: (s: string) => db.execAsync(s),
-            runAsync: async (s: string, p?: (string | number | null)[]) => { await db.runAsync(s, (p ?? []) as never); },
-            getFirstAsync: (s: string, p?: (string | number | null)[]) => db.getFirstAsync(s, (p ?? []) as never) as Promise<never>,
-            getAllAsync: (s: string, p?: (string | number | null)[]) => db.getAllAsync(s, (p ?? []) as never) as Promise<never>,
-          });
-          if (alive) setOk(true);
-        } catch (e2) {
-          if (alive) setErr(`${(e as Error).message} / ${(e2 as Error).message}`);
-        }
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  if (err) {
-    return (
-      <Screen style={{ alignItems: 'center', justifyContent: 'center', padding: SP.xl }}>
-        <Text style={{ fontSize: 30, marginBottom: 12 }}>⚠️</Text>
-        <Text style={{ color: t.text, fontWeight: '700', fontSize: 16, marginBottom: 8 }}>
-          Gagal menyiapkan database
-        </Text>
-        <Text style={{ color: t.textMuted, fontSize: 12, textAlign: 'center' }}>{err}</Text>
-      </Screen>
-    );
-  }
-
-  if (!ok) {
-    return (
-      <Screen style={{ alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ fontSize: 44, marginBottom: 16 }}>📿</Text>
-        <ActivityIndicator color={t.primary} />
-        <Text style={{ color: t.textMuted, marginTop: 12, fontSize: 13 }}>Menyiapkan zikir offline…</Text>
-      </Screen>
-    );
-  }
-
-  return <>{children}</>;
-}
-
-// ---------------------------------------------------------------- Habit screen
-function HabitScreen({ onBack }: { onBack: () => void }) {
-  const t = useT();
-  const insets = useSafeAreaInsets();
-  const { categories, checkinsToday, streak, refreshHabit, repo } = useData();
-  const [done, setDone] = useState<{ id: number; title: string; count: number }[] | null>(null);
-  const today = new Date().toISOString().slice(0, 10);
-
-  const load = useCallback(async () => {
-    await refreshHabit();
-    if (!repo) return;
-    const rows = await repo.getCheckins(today);
-    const items = await Promise.all(
-      rows.map(async (r) => {
-        const d = await repo.getDua(r.dua_id);
-        return { id: r.dua_id, title: d?.title ?? `Dua #${r.dua_id}`, count: r.count };
-      }),
-    );
-    setDone(items);
-  }, [repo, refreshHabit, today]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const goal = 3;
-  const doneCount = done?.length ?? 0;
-  const pct = Math.min(100, Math.round((doneCount / goal) * 100));
-
+  const pct = Math.round(progress * 100);
   return (
-    <Screen>
-      <View style={{ paddingTop: insets.top + 12, paddingHorizontal: SP.md, paddingBottom: SP.sm }}>
-        <Text style={{ color: t.text, fontSize: 26, fontWeight: '700' }}>Kebiasaan Harian</Text>
-        <Text style={{ color: t.textMuted, marginTop: 2 }}>{today}</Text>
-      </View>
-      <ScrollView contentContainerStyle={{ padding: SP.md, paddingTop: 0, paddingBottom: 120 }}>
-        <View style={{ backgroundColor: t.card, borderWidth: 1, borderColor: t.cardBorder, borderRadius: SP.radius.lg, padding: SP.md, marginBottom: SP.md }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <View>
-              <Text style={{ color: t.textMuted, fontSize: 12 }}>Target harian</Text>
-              <Text style={{ color: t.text, fontSize: 30, fontWeight: '800' }}>
-                {doneCount}
-                <Text style={{ fontSize: 16, color: t.textMuted }}> / {goal} zikir</Text>
-              </Text>
-            </View>
-            <View style={{ alignItems: 'center' }}>
-              <Text style={{ fontSize: 26 }}>🔥</Text>
-              <Text style={{ color: t.text, fontWeight: '700', textAlign: 'center' }}>{streak} hari</Text>
-            </View>
-          </View>
-          <View style={{ height: 8, borderRadius: 4, backgroundColor: t.ringTrack, marginTop: SP.md, overflow: 'hidden' }}>
-            <View style={{ height: 8, width: `${pct}%`, backgroundColor: t.primary, borderRadius: 4 }} />
-          </View>
-          <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 8 }}>
-            {pct >= 100 ? 'MasyaAllah, target harian tercapai ✅' : `Kurang ${Math.max(0, goal - doneCount)} zikir lagi untuk menutup target hari ini.`}
+    <View style={{ flex: 1, backgroundColor: t.bg, alignItems: 'center', justifyContent: 'center', padding: SP.xxl }}>
+      <Text style={[SERIF('600'), { color: t.text, fontSize: TYPE.headline, marginBottom: SP.sm }]}>Dunu</Text>
+      {error ? (
+        <>
+          <Text style={[SANS('400'), { color: t.textMuted, fontSize: TYPE.caption, textAlign: 'center', marginBottom: SP.lg }]}>
+            {error}
           </Text>
-        </View>
-
-        <SectionTitle>Yang dibaca hari ini</SectionTitle>
-        {done === null ? (
-          <View style={{ backgroundColor: t.card, borderWidth: 1, borderColor: t.cardBorder, borderRadius: SP.radius.md, padding: SP.lg, alignItems: 'center' }}>
-            <ActivityIndicator color={t.primary} />
-            <Text style={{ color: t.textMuted, marginTop: 8, fontSize: 13 }}>Memuat catatan…</Text>
+          <Pressable onPress={onRetry} accessibilityRole="button"
+            style={{ paddingHorizontal: SP.lg, paddingVertical: SP.md, borderRadius: SP.r.chip, backgroundColor: t.primary }}>
+            <Text style={[SANS('600'), { color: t.onPrimary, fontSize: TYPE.caption }]}>Coba lagi</Text>
+          </Pressable>
+        </>
+      ) : (
+        <View style={{ width: 220, alignItems: 'center' }}>
+          <View style={{ width: 220, height: 5, borderRadius: 3, backgroundColor: t.ringTrack, overflow: 'hidden' }}>
+            <View style={{ width: `${Math.max(4, pct)}%`, height: 5, borderRadius: 3, backgroundColor: t.ringProgress }} />
           </View>
-        ) : done.length === 0 ? (
-          <View style={{ backgroundColor: t.card, borderWidth: 1, borderColor: t.cardBorder, borderRadius: SP.radius.md, padding: SP.lg, alignItems: 'center' }}>
-            <Text style={{ fontSize: 30 }}>🌱</Text>
-            <Text style={{ color: t.textMuted, textAlign: 'center', marginTop: 10, fontSize: 13 }}>
-              Belum ada catatan hari ini. Buka zikir lalu tekan “Tandai sudah dibaca”, atau selesaikan satu putaran tasbih.
+          <Text style={[SANS('400'), { color: t.textMuted, fontSize: TYPE.caption, marginTop: SP.md }]}>
+            {label}{pct > 0 && pct < 100 ? ` ${pct}%` : ''}
+          </Text>
+          {pct > 0 && pct < 100 && (
+            <Text style={[SANS('400'), { color: t.textFaint, fontSize: TYPE.micro, marginTop: 2, textAlign: 'center' }]}>
+              sekali saja — setelah ini aplikasi dibuka offline sepenuhnya
             </Text>
-          </View>
-        ) : (
-          done.map((d, i) => (
-            <View key={d.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: t.cardBorder }}>
-              <Text style={{ color: t.textMuted, width: 22 }}>{i + 1}.</Text>
-              <Text style={{ color: t.text, flex: 1, fontWeight: '600' }}>{d.title}</Text>
-              <Text style={{ color: t.success, fontWeight: '700', fontSize: 12 }}>{d.count}x</Text>
-            </View>
-          ))
-        )}
-
-        <SectionTitle>Kategori</SectionTitle>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SP.sm }}>
-          {categories.map((c) => (
-            <View key={c.slug} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: t.cardBorder }}>
-              <Text>{c.icon}</Text>
-              <Text style={{ color: t.textMuted, fontSize: 12 }}>{c.name}</Text>
-            </View>
-          ))}
+          )}
         </View>
-      </ScrollView>
-    </Screen>
+      )}
+    </View>
   );
 }
 
-// -------------------------------------------------------------------- Tabs
-const TABS = [
-  { key: 'home', label: 'Beranda', icon: '🏠' },
-  { key: 'search', label: 'Cari', icon: '🔍' },
-  { key: 'tasbih', label: 'Tasbih', icon: '📿' },
-  { key: 'habit', label: 'Habit', icon: '🔥' },
-] as const;
-
-function Tabs({ route, go }: { route: Route; go: (r: Route) => void }) {
+function TabBar({ route, go }: { route: Route; go: (r: Route) => void }) {
   const t = useT();
   const insets = useSafeAreaInsets();
-  // Tab bar stays visible on every top-level destination. Detail/category screens
-  // are pushed views, so they hide it; search and habit are tabs and must not.
   const active =
     route.name === 'home' ? 'home'
     : route.name === 'search' ? 'search'
     : route.name === 'tasbih' ? 'tasbih'
     : route.name === 'habit' ? 'habit'
+    : route.name === 'profile' ? 'profile'
     : null;
+  // Tasbih runs as a focus mode: it owns the whole screen, no chrome.
   if (active === null) return null;
+
   return (
     <View
       style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        flexDirection: 'row',
+        position: 'absolute', left: 0, right: 0, bottom: 0,
         backgroundColor: t.tabBar,
-        borderTopWidth: 1,
-        borderTopColor: t.cardBorder,
-        paddingTop: 8,
-        paddingBottom: insets.bottom + 8,
+        borderTopWidth: 1, borderTopColor: t.hairline,
+        flexDirection: 'row',
+        paddingTop: SP.sm,
+        paddingBottom: insets.bottom > 0 ? insets.bottom : SP.md,
       }}
     >
-      {TABS.map((tab) => {
-        const on = tab.key === active;
+      {TABS.map(({ key, label, Icon }) => {
+        const on = active === key;
         return (
           <Pressable
-            key={tab.key}
-            onPress={() => go({ name: tab.key } as Route)}
-            style={{ flex: 1, alignItems: 'center', gap: 3, opacity: on ? 1 : 0.55 }}
+            key={key}
+            onPress={() => go({ name: key } as Route)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: on }}
+            accessibilityLabel={label}
+            style={{ flex: 1, alignItems: 'center', gap: 3 }}
           >
-            <Text style={{ fontSize: 20, transform: [{ scale: on ? 1.15 : 1 }] }}>{tab.icon}</Text>
-            <Text style={{ color: on ? t.primary : t.textMuted, fontSize: 11, fontWeight: on ? '700' : '500' }}>
-              {tab.label}
+            <Icon size={21} color={on ? t.accent : t.textFaint} />
+            <Text style={[SANS('600'), { fontSize: 10, letterSpacing: 0.2, color: on ? t.accent : t.textFaint }]}>
+              {label}
             </Text>
           </Pressable>
         );
@@ -229,39 +132,58 @@ function Tabs({ route, go }: { route: Route; go: (r: Route) => void }) {
   );
 }
 
-// --------------------------------------------------------------------- Root
-export default function App() {
+function Shell() {
+  const boot = useBoot();
   const [route, setRoute] = useState<Route>({ name: 'home' });
-  const { mode } = useTheme();
-  const sys = useColorScheme();
-  const dark = mode === 'dark' || (mode === 'system' && sys === 'dark');
   const go = useCallback((r: Route) => setRoute(r), []);
+  const openTasbih = useCallback((duaId: number) => {
+    void useTasbih.getState().load(duaId);
+    setRoute({ name: 'tasbih' });
+  }, []);
+
+  if (!boot.ready)
+    return <BootFallback error={boot.error} onRetry={boot.retry} progress={boot.progress} label={boot.label} />;
 
   return (
+    <View style={{ flex: 1 }}>
+      {route.name === 'home' && (
+        <HomeScreen
+          onOpenCategory={(slug) => go({ name: 'category', slug })}
+          onOpenQuran={() => go({ name: 'quran' })}
+          onOpenHabit={() => go({ name: 'habit' })}
+          onOpenSearch={() => go({ name: 'search' })}
+        />
+      )}
+      {route.name === 'search' && (
+        <SearchScreen
+          onOpenDua={(id) => go({ name: 'detail', id })}
+          onOpenAyah={(surah) => go({ name: 'reader', surah })}
+        />
+      )}
+      {route.name === 'tasbih' && <TasbihScreen onBack={() => go({ name: 'home' })} />}
+      {route.name === 'habit' && <HabitScreen />}
+      {route.name === 'profile' && <ProfileScreen onBack={() => go({ name: 'home' })} />}
+      {route.name === 'quran' && <QuranScreen onOpenSurah={(n) => go({ name: 'reader', surah: n })} onBack={() => go({ name: 'home' })} />}
+      {route.name === 'reader' && <QuranReaderScreen surahNumber={route.surah} onBack={() => go({ name: 'quran' })} />}
+      {route.name === 'category' && (
+        <CategoryScreen slug={route.slug} onBack={() => go({ name: 'home' })} onOpenDua={(id) => go({ name: 'detail', id })} />
+      )}
+      {route.name === 'detail' && (
+        <DetailScreen duaId={route.id} onBack={() => go({ name: 'home' })} onOpenTasbih={openTasbih} />
+      )}
+
+      <TabBar route={route} go={go} />
+    </View>
+  );
+}
+
+export default function App() {
+  return (
     <SafeAreaProvider>
-      <Bootstrap>
-        <StatusBar style={dark ? 'light' : 'dark'} />
-        <View style={{ flex: 1 }}>
-          {route.name === 'home' && (
-            <HomeScreen
-              onOpenCategory={(slug) => go({ name: 'category', slug })}
-              onOpenDua={(id) => go({ name: 'detail', id })}
-              onGoSearch={() => go({ name: 'search' })}
-              onGoTasbih={() => go({ name: 'tasbih' })}
-            />
-          )}
-          {route.name === 'category' && (
-            <CategoryScreen slug={route.slug} onBack={() => go({ name: 'home' })} onOpenDua={(id) => go({ name: 'detail', id })} />
-          )}
-          {route.name === 'detail' && (
-            <DetailScreen duaId={route.id} onBack={() => go({ name: 'home' })} onOpenTasbih={() => go({ name: 'tasbih' })} />
-          )}
-          {route.name === 'tasbih' && <TasbihScreen onBack={() => go({ name: 'home' })} />}
-          {route.name === 'search' && <SearchScreen onBack={() => go({ name: 'home' })} onOpenDua={(id) => go({ name: 'detail', id })} />}
-          {route.name === 'habit' && <HabitScreen onBack={() => go({ name: 'home' })} />}
-          <Tabs route={route} go={go} />
-        </View>
-      </Bootstrap>
+      <ThemeProvider>
+        <StatusBar style="auto" />
+        <Shell />
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }

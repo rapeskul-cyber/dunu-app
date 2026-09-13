@@ -9,20 +9,20 @@ import { CATEGORIES, DUAS, type SeedCategory, type SeedDua } from './seed';
 /** Minimal statement type so this module stays driver-agnostic and testable. */
 export interface SqlDriver {
   execAsync(sql: string): Promise<void>;
-  runAsync(sql: string, params?: (string | number | null)[]): Promise<void>;
+  runAsync(sql: string, params?: unknown[]): Promise<void>;
   getFirstAsync<T = Record<string, unknown>>(
     sql: string,
-    params?: (string | number | null)[],
+    params?: unknown[],
   ): Promise<T | null>;
   getAllAsync<T = Record<string, unknown>>(
     sql: string,
-    params?: (string | number | null)[],
+    params?: unknown[],
   ): Promise<T[]>;
 }
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
-/** Ordered DDL. Each statement is idempotent (IF NOT EXISTS). */
+/** Ordered DDL. Each entry is idempotent (IF NOT EXISTS) and applied in version order. */
 export const MIGRATIONS: { version: number; up: string[] }[] = [
   {
     version: 1,
@@ -94,6 +94,61 @@ export const MIGRATIONS: { version: number; up: string[] }[] = [
       `CREATE INDEX IF NOT EXISTS idx_habit_day ON habit_checkins(day_key)`,
     ],
   },
+  {
+    // v2 — full Qur'an module (offline mushaf + Indonesian translation + audio)
+    version: 2,
+    up: [
+      `CREATE TABLE IF NOT EXISTS surahs (
+         number           INTEGER PRIMARY KEY NOT NULL,
+         name_arabic      TEXT NOT NULL,
+         name_latin       TEXT NOT NULL,
+         name_translation TEXT NOT NULL,
+         revelation       TEXT NOT NULL,
+         ayah_count       INTEGER NOT NULL,
+         audio_url        TEXT NOT NULL DEFAULT ''
+       )`,
+
+      `CREATE TABLE IF NOT EXISTS ayahs (
+         global_number   INTEGER PRIMARY KEY NOT NULL,
+         surah_number    INTEGER NOT NULL,
+         number_in_surah INTEGER NOT NULL,
+         text_arabic     TEXT NOT NULL,
+         translation     TEXT NOT NULL,
+         juz             INTEGER NOT NULL,
+         reference       TEXT NOT NULL,
+         FOREIGN KEY (surah_number) REFERENCES surahs(number) ON DELETE CASCADE
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_ayah_surah ON ayahs(surah_number, number_in_surah)`,
+
+      `CREATE TABLE IF NOT EXISTS ayah_search (
+         global_number INTEGER PRIMARY KEY NOT NULL,
+         haystack      TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_ayah_search ON ayah_search(haystack)`,
+
+      `CREATE TABLE IF NOT EXISTS quran_bookmarks (
+         id            INTEGER PRIMARY KEY AUTOINCREMENT,
+         global_number INTEGER NOT NULL UNIQUE,
+         created_at    INTEGER NOT NULL
+       )`,
+
+      `CREATE TABLE IF NOT EXISTS last_read (
+         id            INTEGER PRIMARY KEY CHECK (id = 1),
+         surah_number  INTEGER NOT NULL,
+         ayah_number   INTEGER NOT NULL,
+         updated_at    INTEGER NOT NULL
+       )`,
+    ],
+  },
+  {
+    // v3 — reader performance: cover index for "last read" and the surah reader's
+    // ordered window scan (the query that opens a 286-ayah surah).
+    version: 3,
+    up: [
+      `CREATE INDEX IF NOT EXISTS idx_ayah_search_hay ON ayah_search(haystack)`,
+      `CREATE INDEX IF NOT EXISTS idx_quran_bm ON quran_bookmarks(created_at DESC)`,
+    ],
+  },
 ];
 
 export interface CategoryRow {
@@ -118,11 +173,13 @@ export interface DuaRow {
   default_target: number;
 }
 
-/** Strip Arabic diacritics + normalise for forgiving search. */
+/** Strip Arabic diacritics + normalise for forgiving search.
+ *  Note the range includes maddah (U+0653-0655) and Quranic annotation marks
+ *  (U+06D6-06ED); omitting 0653 breaks substring matching on words like لَآ. */
 export function normalizeArabic(s: string): string {
   return s
-    .replace(/[\u064B-\u0652\u0670\u06D6-\u06ED\u0640]/g, '')
-    .replace(/[\u0622\u0623\u0625\u0627]/g, 'ا')
+    .replace(/[\u064B-\u0652\u0653-\u0655\u0670\u06D6-\u06ED\u0640]/g, '')
+    .replace(/[\u0622\u0623\u0625\u0627\u0671]/g, 'ا') // includes alif-wasla U+0671
     .replace(/\u0624/g, 'و')
     .replace(/\u0626/g, 'ي')
     .replace(/\u0629/g, 'ه')

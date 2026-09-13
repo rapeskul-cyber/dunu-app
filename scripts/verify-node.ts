@@ -143,6 +143,49 @@ async function main() {
   const streak = await repo.getStreak(day);
   ok('streak counts consecutive days', streak === 3, `(${streak})`);
 
+  console.log('\n=== PHASE 5: full Quran (migration v2 + repository) ===');
+  const { seedQuran } = await import('../src/core/db/quranSeed');
+  const first = await seedQuran(driver);
+  ok('quran seeded on first run', first.seeded === true && first.ayahs === 6236 && first.surahs === 114,
+     `(${first.ayahs} ayahs)`);
+  const second = await seedQuran(driver);
+  ok('quran re-seed is a no-op', second.seeded === false && second.ayahs === 6236);
+  ok('search index complete', second.searchRows === 6236, `(${second.searchRows})`);
+
+  const { QuranRepository } = await import('../src/data/repositories/QuranRepository');
+  const q = new QuranRepository(driver);
+  const surahs = await q.getSurahs();
+  ok('114 surah rows', surahs.length === 114);
+  // name_latin comes verbatim from the source API's transliteration scheme
+  // ("Al-Baqara", "Al-Kahf"); we surface it unmodified rather than inventing
+  // our own spelling.
+  ok('surah metadata intact', surahs[1].name_latin === 'Al-Baqara' && surahs[1].ayah_count === 286);
+
+  const alKahfi = await q.getAyahs(18, 1, 5);
+  ok('paged ayah read', alKahfi.length === 5 && alKahfi[0].number_in_surah === 1);
+  const kursis = await q.getAyah(262); // global # of 2:255
+  ok('global ayah lookup', !!kursis && kursis.reference === '2:255', kursis?.reference ?? '');
+
+  const hits = await q.search('makanan');
+  ok('quran translation search', hits.length >= 1, `(${hits.length} hits, top ${hits[0]?.reference})`);
+  const arHits = await q.search('سميع');
+  ok('quran arabic (diacritic-free) search', arHits.length >= 5, `(${arHits.length} hits)`);
+  const byName = await q.findSurahByName('kahf');
+  ok('surah name search', byName.length === 1 && byName[0].number === 18);
+
+  const bmOn = await q.toggleQuranBookmark(262);
+  ok('quran bookmark on', bmOn === true && (await q.isQuranBookmarked(262)));
+  ok('bookmark list', (await q.getQuranBookmarks())[0]?.reference === '2:255');
+  const bmOff = await q.toggleQuranBookmark(262);
+  ok('quran bookmark off', bmOff === false && (await q.getQuranBookmarks()).length === 0);
+
+  await q.setLastRead(2, 255);
+  const lr = await q.getLastRead();
+  ok('last-read resume persisted', !!lr && lr.surah_number === 2 && lr.ayah_number === 255);
+
+  const st = await q.stats();
+  ok('stats endpoint', st.surahs === 114 && st.ayahs === 6236 && st.juz === 30, JSON.stringify(st));
+
   raw.close();
   try { fs.rmSync(tmp, { force: true }); } catch { /* temp file cleanup is best-effort */ }
   console.log(`\n────────── RESULT: ${pass} passed, ${fail} failed ──────────`);

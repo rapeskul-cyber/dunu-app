@@ -28,12 +28,12 @@ export interface SeedDua {
 }
 
 export const CATEGORIES: SeedCategory[] = [
-  { id: 1, name: 'Zikir Pagi', slug: 'dzikir-pagi', icon: '🌅', color: '#F59E0B' },
-  { id: 2, name: 'Zikir Petang', slug: 'dzikir-petang', icon: '🌇', color: '#8B5CF6' },
-  { id: 3, name: 'Setelah Sholat', slug: 'setelah-sholat', icon: '🕌', color: '#10B981' },
-  { id: 4, name: 'Sebelum Tidur', slug: 'sebelum-tidur', icon: '🌙', color: '#3B82F6' },
-  { id: 5, name: 'Perlindungan', slug: 'perlindungan', icon: '🛡️', color: '#EF4444' },
-  { id: 6, name: 'Rezeki & Hajat', slug: 'rezeki-hajat', icon: '💰', color: '#14B8A6' },
+  { id: 1, name: 'Zikir Pagi', slug: 'dzikir-pagi', icon: 'sunrise', color: '#F59E0B' },
+  { id: 2, name: 'Zikir Petang', slug: 'dzikir-petang', icon: 'sunset', color: '#8B5CF6' },
+  { id: 3, name: 'Setelah Sholat', slug: 'setelah-sholat', icon: 'mosque', color: '#10B981' },
+  { id: 4, name: 'Sebelum Tidur', slug: 'sebelum-tidur', icon: 'moon', color: '#3B82F6' },
+  { id: 5, name: 'Perlindungan', slug: 'perlindungan', icon: 'shield', color: '#EF4444' },
+  { id: 6, name: 'Rezeki & Hajat', slug: 'rezeki-hajat', icon: 'seed', color: '#14B8A6' },
 ];
 
 export const DUAS: SeedDua[] = [
