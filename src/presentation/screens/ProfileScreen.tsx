@@ -49,7 +49,7 @@ export function ProfileScreen({ onBack }: { onBack: () => void }) {
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: t.primary, alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={[SERIF('600'), { color: t.onPrimary, fontSize: TYPE.title }]}>
-                  {profile.name.slice(0, 1).toUpperCase()}
+                  {(profile.name ?? '?').trim().slice(0, 1).toUpperCase() || '?'}
                 </Text>
               </View>
               <View style={{ flex: 1, marginLeft: SP.md }}>

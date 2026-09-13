@@ -29,6 +29,13 @@ export interface AyahHit extends Ayah {
   surah_arabic: string;
 }
 
+/** Escape LIKE metacharacters for a query used with `ESCAPE '\'`.
+ *  Backslash must be handled first and explicitly, otherwise "%" or "_" typed
+ *  by a user silently widen the match. */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => "\\" + c);
+}
+
 export class QuranRepository {
   constructor(private db: SqlDriver) {}
 
@@ -76,7 +83,7 @@ export class QuranRepository {
     const q = normalizeArabic(query.trim().toLowerCase());
     if (!q) return [];
     // LIKE on the indexed haystack column; Arabic is diacritic-normalised.
-    const like = `%${q.replace(/[%_\\]/g, (c) => (c === '\\' ? c : '\\' + c))}%`;
+    const like = `%${escapeLike(q)}%`;
     const rows = await this.db.getAllAsync<AyahHit & { pos: number }>(
       `SELECT a.global_number,a.surah_number,a.number_in_surah,a.text_arabic,a.translation,a.juz,a.reference,
               s.name_latin AS surah_latin, s.name_arabic AS surah_arabic,
@@ -92,13 +99,15 @@ export class QuranRepository {
     return rows;
   }
 
-  /** Match a surah by Latin name fragment ("baqarah", "yasin", "mulk"). */
+  /** Match a surah by Latin name fragment ("baqarah", "yasin", "mulk").
+   *  LIKE metacharacters in user input are escaped so "%" / "_" cannot widen
+   *  the match beyond what was typed. */
   async findSurahByName(query: string): Promise<Surah[]> {
-    const q = query.trim().toLowerCase();
+    const q = escapeLike(query.trim().toLowerCase());
     if (!q) return [];
     return this.db.getAllAsync<Surah>(
       `SELECT number,name_arabic,name_latin,name_translation,revelation,ayah_count,audio_url
-       FROM surahs WHERE lower(name_latin) LIKE ? ORDER BY number LIMIT 5`,
+       FROM surahs WHERE lower(name_latin) LIKE ? ESCAPE '\\' ORDER BY number LIMIT 5`,
       [`%${q}%`],
     );
   }

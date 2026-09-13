@@ -82,42 +82,32 @@ if "manifest.webmanifest" not in html:
     with open(idx_path, "w", encoding="utf-8") as f:
         f.write(html)
 
-vercel = {
-    "framework": None,
-    "cleanUrls": True,
-    "headers": [
-        {
-            "source": "/(.*)",
-            "headers": [
-                {"key": "X-Content-Type-Options", "value": "nosniff"},
-                {"key": "Referrer-Policy", "value": "strict-origin-when-cross-origin"},
-            ],
-        },
-        {
-            "source": "/(.*).wasm",
-            "headers": [
-                {"key": "Content-Type", "value": "application/wasm"},
-                {"key": "Cache-Control", "value": "public, max-age=31536000, immutable"},
-            ],
-        },
-        {
-            "source": "/assets/vendor/(.*)",
-            "headers": [
-                {"key": "Cache-Control", "value": "public, max-age=31536000, immutable"},
-            ],
-        },
-        {
-            "source": "/_expo/static/js/(.*)",
-            "headers": [{"key": "Cache-Control", "value": "public, max-age=31536000, immutable"}],
-        },
-        {
-            "source": "/manifest.webmanifest",
-            "headers": [{"key": "Content-Type", "value": "application/manifest+json"}],
-        },
-    ],
-}
-with open(os.path.join(DIST, "vercel.json"), "w", encoding="utf-8") as f:
-    json.dump(vercel, f, indent=2)
+# Single source of truth for security headers & routing is the repo-root
+# vercel.json (used by the GitHub-integration build). The CLI path
+# (`vercel deploy ... dist`) reads a vercel.json INSIDE the output dir, so copy
+# it through instead of generating a second, divergent one -- two configs means
+# the hardened one silently stops applying to one of the two deploy routes.
+root_cfg = os.path.join(ROOT, "vercel.json")
+if os.path.isfile(root_cfg):
+    shutil.copy2(root_cfg, os.path.join(DIST, "vercel.json"))
+    print("vercel.json copied from repo root (security headers travel with the build)")
+else:
+    vercel = {
+        "framework": None,
+        "cleanUrls": True,
+        "headers": [
+            {
+                "source": "/(.*)",
+                "headers": [
+                    {"key": "X-Content-Type-Options", "value": "nosniff"},
+                    {"key": "Referrer-Policy", "value": "strict-origin-when-cross-origin"},
+                ],
+            },
+        ],
+    }
+    with open(os.path.join(DIST, "vercel.json"), "w", encoding="utf-8") as f:
+        json.dump(vercel, f, indent=2)
+    print("WARNING: repo-root vercel.json missing; wrote a minimal one")
 
 print("PWA manifest + vercel.json written into dist/")
 print("index.html patched:", "manifest.webmanifest" in open(idx_path, encoding='utf-8').read())
