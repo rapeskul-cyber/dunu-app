@@ -38,7 +38,8 @@
     "extra": {
       "offlineFirst": true,
       "seedCount": 20,
-      "googleClientId": ""
+      "googleClientId": "",
+      "entitlementUrl": ""
     },
     "scheme": "dozir"
   }
